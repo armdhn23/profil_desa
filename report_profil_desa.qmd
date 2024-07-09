@@ -1,0 +1,501 @@
+---
+title: "Report Profil Desa"
+author: "BKKBN Sulbar"
+format: pdf
+embed-resources: true
+params:
+  kab_text: "MAMUJU TENGAH"
+  kec_text: "TOBADAK"
+  desa_text: "MAHAHE"
+  bulan: "MEI"
+---
+
+## Sumber Daya Desa/Kelurahan
+
+```{r load_data, echo = FALSE, results='hide', message=FALSE, warning=FALSE}
+library(dplyr)
+library(data.table)
+library(tidyr)
+library(ggplot2)
+library(reactablefmtr)
+library(tidyr)
+library(kableExtra)
+library(ggrepel)
+
+data_desa <- fread("data/profil_poktan.csv")
+data_sumber_daya <- fread("data/profil_sumber_daya.csv")
+
+kelompok_umur_lk <- fread("data/PIRAMIDA PENDUDUK - Laki-laki.csv")
+kelompok_umur_pr <- fread("data/PIRAMIDA PENDUDUK - Perempuan.csv")
+
+data_kb <- fread("data/kb-dummy.csv")
+bangke <- fread("data/petugas_kb_bangke.csv")
+
+data_stunting <- fread("data/stunting-dummy.csv")
+```
+
+```{r echo = FALSE, results='hide', message=FALSE, warning=FALSE}
+kelompok_umur_lk <- kelompok_umur_lk %>%
+  filter(Kecamatan == params$kec_text, Desa_Kelurahan == params$desa_text) %>%
+  gather("Kelompok_Umur", "Jumlah", 7:23) %>%
+  mutate(Jenis_Kelamin = rep("Laki-laki", 17))
+
+kelompok_umur_pr <- kelompok_umur_pr %>%
+  filter(Kecamatan == params$kec_text, Desa_Kelurahan == params$desa_text) %>%
+  gather("Kelompok_Umur", "Jumlah", 7:23) %>%
+  mutate(Jenis_Kelamin = rep("Peremupuan", 17))
+
+#data_piramida <- rbind(kelompok_umur_lk, kelompok_umur_pr)
+
+ku <- c("0 - 1",	"2 - 4",	"5 - 9",	"10 - 14",	"15 - 19",
+        "20 - 24",	"25 - 29",	"30 - 34",	"35 - 39",	"40 - 44",
+        "45 - 49",	"50 - 54",	"55 - 59	", "60 - 64",
+        "65 - 69",	"70 - 74",	"75+")
+
+# Membuat data untuk grafik piramida
+piramida_data <- data.frame(
+  Kelompok_Umur = factor(rep(ku, times = 2), levels = ku),
+  Jumlah = c(-kelompok_umur_lk$Jumlah, kelompok_umur_pr$Jumlah),
+  Jenis_Kelamin = rep(c("Laki-Laki", "Perempuan"), each = length(kelompok_umur_lk$Kelompok_Umur))
+)
+
+jumlah_penduduk = sum(abs(piramida_data$Jumlah))
+
+umur_mayoritas <- piramida_data %>%
+  mutate(Jumlah = abs(Jumlah)) %>%
+  group_by(Kelompok_Umur) %>%
+  reframe(Jumlah = sum(Jumlah)) %>%
+  slice_max(order_by = Jumlah, n = 2)
+
+kelompok_mayoritas1 = as.character(umur_mayoritas$Kelompok_Umur[1])
+kelompok_mayoritas2 = as.character(umur_mayoritas$Kelompok_Umur[2])
+jumlah_mayoritas = as.numeric(sum(umur_mayoritas$Jumlah))
+persen_mayoritas = round(jumlah_mayoritas/jumlah_penduduk * 100, 2)
+```
+
+Desa `r params$desa_text` terletak di kecamatan `r params$kec_text` Kabupaten `r params$kab_text`. Desa memiliki jumlah penduduk sebanyak `r jumlah_penduduk`. Kelompok umur mayoritas adalah `r kelompok_mayoritas1` dan `r kelompok_mayoritas2` sebanyak `r jumlah_mayoritas` atau sebesar `r persen_mayoritas`%. Berikut Grafik Piramida Penduduk desa `r params$kec_text`:
+
+```{r piramida_penduduk, echo = FALSE , message=FALSE, warning=FALSE}
+#| fig-align: center
+#| fig-cap: Piramida Penduduk
+  
+pop_range <- range(piramida_data$Jumlah)
+pop_range_breaks <- pretty(pop_range, n = 7)
+
+ggplot(piramida_data,
+       aes(x = Jumlah,
+           y = Kelompok_Umur,
+           fill = Jenis_Kelamin)) +
+  geom_col() +
+  scale_x_continuous(breaks  = pop_range_breaks,
+                     labels = scales::comma(abs(pop_range_breaks))) + 
+  scale_fill_brewer(palette = "Dark2",
+                    guide = guide_legend(
+                      title = "Jenis Kelamin"
+                    )) +
+  theme_minimal() +
+  theme(legend.position = "top") +
+  ylab("Jumlah Penduduk") + xlab("Kelompok Umur")
+
+```
+
+\newpage
+
+Adapun rincian jumlah penduduk di `r params$desa_text` ditampilkan pada tabel berikut:
+
+```{r, tabel_piramuda, echo = FALSE , message=FALSE, warning=FALSE}
+lk <- kelompok_umur_lk %>%
+  select(Kelompok_Umur, Jumlah)
+
+#colnames(lk) <- c("Kelompok Umur", "Laki-Laki")
+
+pr <- kelompok_umur_pr %>%
+  select(Kelompok_Umur, Jumlah)
+#colnames(pr) <- c("Kelompok Umur", "Perempuan")
+
+gabung_lk_pr <- full_join(lk, pr, by = "Kelompok_Umur") %>%
+        mutate(Total = Jumlah.x + Jumlah.y) %>%
+        bind_rows(summarise(., across(where(is.numeric), sum),
+                          across(where(is.character), ~'Total')))
+
+colnames(gabung_lk_pr) <- c("Kelompok Umur", "Laki-Laki", "Perempuan", "Total Per Umur")
+
+# Dapatkan dua nilai tertinggi di kolom 'r'
+highest_r_values <- head(gabung_lk_pr[order(-gabung_lk_pr$`Total Per Umur`[1:17]), 'Total Per Umur'], 2)
+
+# Dapatkan indeks dari dua nilai tertinggi tersebut
+indeks_tertinggi <- which(gabung_lk_pr$`Total Per Umur` %in% highest_r_values)
+
+kable(gabung_lk_pr) %>%
+  row_spec(indeks_tertinggi, bold = T, color = "black", background = "#e5e5e5") %>%
+  add_header_above(c("Jumlah Penduduk Berdasarkan Kelompok Umur" = 4))
+```
+
+Mari kita telusuri informasi penting terkait wilayah ini sebelumnya. Data yang disajikan mencakup luas wilayah, jumlah penduduk, kepadatan penduduk, jumlah Keluarga Resiko Stunting (KRS), peserta BPJS, dan Indeks Desa Membangun (IDM).
+
+```{r box_sumber_daya, echo = FALSE , message=FALSE, warning=FALSE}
+#| layout-nrow: 1
+
+df_sd <- data_sumber_daya %>%
+      filter(KECAMATAN == params$kec_text , KELURAHAN == params$desa_text)
+colnames(df_sd) <- c("Kabupaten", "Kecamatan", "Kelurahan", "Luas Wilayah", "Jumlah Penduduk",                               "Kepadatan Penduduk", "KRS","BPJS" ,"IDM")
+
+df_sd <- gather(df_sd, "Indikator", "Nilai", 4:9)
+
+kable(df_sd[,4:5]) %>%
+  add_header_above(c("Tabel Sumber Daya" = 2))
+
+df_profil <- data_desa %>%
+    select(KABUPATEN, KECAMATAN, KELURAHAN, `Kampung KB`, `Rumah DataKU`, 
+           BKB, BKR, BKL, UPPKA, `PIK-R`) %>%
+    filter(KECAMATAN == params$kec_text , KELURAHAN == params$desa_text)
+
+df_profil <- gather(df_profil, "Poktan", "Keberadaan", 4:10)
+  
+indeks_tertinggi <- which(df_profil$Keberadaan == "Tidak ada")
+kable(df_profil[,4:5]) %>%
+  row_spec(indeks_tertinggi, bold = T, color = "black", background = "#e5e5e5") %>%
+  add_header_above(c("Tabel Kelompok Kegiatan" = 2))
+   
+```
+
+## Program Stunting
+
+Stunting adalah kondisi gagal pertumbuhan pada anak yang disebabkan oleh kekurangan gizi kronis, yang dapat berdampak pada keterbelakangan fisik dan kognitif yang serius. Berikut tabel gambaran indikator yang berhubungan dengan stunting di `r params$desa_text`:
+
+```{r profil_stunting, echo = FALSE , message=FALSE, warning=FALSE}
+data_profil_stunting <- data_stunting %>%
+  select(1:9, BULAN) %>%
+  filter(KECAMATAN == params$kec_text, KELURAHAN == params$desa_text, 
+       BULAN == params$bulan)
+colnames(data_profil_stunting) <- c("KABUPATEN", "KECAMATAN","KELURAHAN", 
+                                    "Jumlah Keluarga",  "Jumlah Keluarga Sasaran", "Jumlah KRS", 
+                                    "Penerima BAAS", "Penerima Bantuan Pangan", "Jumlah Balita Stunting",
+                                    "Bulan")
+
+data_profil_stunting <- gather(data_profil_stunting, "Indikator", "Nilai", 4:9)
+kable(data_profil_stunting[, 5:6]) %>%
+  add_header_above(c("Tabel Indikator Stunting" = 2))
+```
+
+Dalam upaya mencegah dan mengatasi stunting setiap desa/kelurahan membentuk Tim Pendamping Keluarga (TPK). TPK sendiri memiliki 4 sasaran pendampingan, yakni:
+
+-   Calon Pengantin (Catin);
+
+-   Ibu Hamil (Bumil);
+
+-   Ibu Pascasalin;
+
+-   Bayi dibawah 2 tahun (2 tahun)
+
+Berikut grafik pendampingan 4 sasaran tersebut pada bulan `r params$bulan`:
+
+```{r fungsi_donut, echo = FALSE , message=FALSE, warning=FALSE}
+
+big_number_donut_plot <- function(df, highlight_color, big_number_text_label) {
+  
+  # Create a nicely formatted big number to go in the donut hole
+  #big_number_text_label <- percent(value, accuracy = 1)
+  
+  # Create our plot
+  ggplot(df,
+         aes(x = c(1,1),
+             y = Persentase,
+             fill = Kategori)) +
+    
+    # Add a bar, but don't add the legend
+    geom_col(show.legend = FALSE) +
+    
+    # A pie/donut chart is a bar chart with polar coordinates
+    # Add polar coordinates and set the direction to -1 
+    # so the filled in part starts at the top and goes clockwise
+    coord_polar(theta = "y",
+                direction = -1) +
+    
+    
+    # Set the limits, which is important for adding the hole
+    xlim(c(-2, 2)) +
+    
+    # Set a color scale with the highlighted section in whatever color
+    # is chosen with the highlight_color argument and the rest in a light gray
+    scale_fill_manual(values = c(highlight_color, "#e5e5e5")) +
+    
+    # Set theme_void() to remove grid lines and everything else from the plot
+    theme_void() +
+    
+    # Add the big number in the center of the hole
+    annotate("text",
+             label = big_number_text_label,
+             fontface = "bold",
+             color = highlight_color,
+             size = 12,
+             x = -2,
+             y = 0) +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 20))
+  
+}
+
+```
+
+```{r data_pie, echo = FALSE , message=FALSE, warning=FALSE}
+#| layout-nrow: 1
+data_pie_catin <- data_stunting %>%
+  select(KECAMATAN, KELURAHAN, CATIN_SASARAN, CATIN_TERDAMPINGI, 
+         CATIN_TIDAK_TERDAMPINGI,CATIN_BERESIKO, BULAN) %>%
+  filter(KECAMATAN == params$kec_text, 
+         KELURAHAN == params$desa_text, BULAN == params$bulan)
+
+jumlah_sasaran_catin <- sum(data_pie_catin$CATIN_SASARAN)
+
+data_pie_catin <-data.frame(
+  Kategori = c("Terdampingi", "Tidak Terdampingi"),
+  Nilai = c(as.numeric(data_pie_catin[1, 'CATIN_TERDAMPINGI']), 
+            as.numeric(data_pie_catin[1, 'CATIN_TIDAK_TERDAMPINGI']))
+)
+
+data_pie_catin <- data_pie_catin %>%
+  mutate(Persentase = round(Nilai/jumlah_sasaran_catin, 4))
+# Tentukan teks untuk setiap sektor
+#teks <- paste(data_pie$Kategori, data_pie$Nilai, sep = ": ")
+
+persentase_terdampingi_catin <- paste0(round(data_pie_catin$Nilai[1] / sum(data_pie_catin$Nilai), 1) *100 ,"%")
+
+warna_catin <- "purple"
+
+
+# Tentukan warna untuk setiap kategori
+
+
+# Buat plot donat menggunakan plot_ly dengan argumen text untuk menampilkan teks
+
+data_pie_bumil <- data_stunting %>%
+  select(KECAMATAN, KELURAHAN, BUMIL_SASARAN, BUMIL_TERDAMPINGI, 
+         BUMIL_TIDAK_TERDAMPINGI,BUMIL_BERESIKO, BULAN) %>%
+  filter(KECAMATAN == params$kec_text, 
+         KELURAHAN == params$desa_text, BULAN == params$bulan)
+
+jumlah_sasaran_bumil <- sum(data_pie_bumil$BUMIL_SASARAN)
+
+data_pie_bumil <-data.frame(
+  Kategori = c("Terdampingi", "Tidak Terdampingi"),
+  Nilai = c(as.numeric(data_pie_bumil[1, 'BUMIL_TERDAMPINGI']), 
+            as.numeric(data_pie_bumil[1, 'BUMIL_TIDAK_TERDAMPINGI']))
+)
+
+
+data_pie_bumil <- data_pie_bumil %>%
+  mutate(Persentase = round(Nilai/jumlah_sasaran_bumil, 4)*100)
+# Tentukan teks untuk setiap sektor
+#teks <- paste(data_pie$Kategori, data_pie$Nilai, sep = ": ")
+
+persentase_terdampingi_bumil <- paste0(round(data_pie_bumil$Nilai[1] / sum(data_pie_bumil$Nilai) * 100, 1),"%")
+
+# Tentukan warna untuk setiap kategori
+warna_bumil <- "#0d6efd"
+
+###
+data_pie_pascasalin <- data_stunting %>%
+  select(KECAMATAN, KELURAHAN, PASCASALIN_SASARAN, PASCASALIN_TERDAMPINGI, 
+         PASCASALIN_TIDAK_TERDAMPINGI,PASCASALIN_BERESIKO, BULAN) %>%
+  filter(KECAMATAN == params$kec_text, 
+         KELURAHAN == params$desa_text, BULAN == params$bulan)
+jumlah_sasaran_pascasalin <- sum(data_pie_pascasalin$PASCASALIN_SASARAN)
+
+data_pie_pascasalin <-data.frame(
+  Kategori = c("Terdampingi", "Tidak Terdampingi"),
+  Nilai = c(as.numeric(data_pie_pascasalin[1, 'PASCASALIN_TERDAMPINGI']), 
+            as.numeric(data_pie_pascasalin[1, 'PASCASALIN_TIDAK_TERDAMPINGI']))
+)
+
+data_pie_pascasalin <- data_pie_pascasalin %>%
+  mutate(Persentase = round(Nilai/jumlah_sasaran_pascasalin, 4)*100)
+
+# Tentukan teks untuk setiap sektor
+#teks <- paste(data_pie$Kategori, data_pie$Nilai, sep = ": ")
+
+persentase_terdampingi_pascasalin <- paste0(round(data_pie_pascasalin$Nilai[1] / sum(data_pie_pascasalin$Nilai) * 100, 1), "%")
+
+# Tentukan warna untuk setiap kategori
+warna_pascasalin <- "#2eb857"
+
+###
+data_pie_baduta <- data_stunting %>%
+  select(KECAMATAN, KELURAHAN, BADUTA_SASARAN, BADUTA_TERDAMPINGI, 
+         BADUTA_TIDAK_TERDAMPINGI,BADUTA_BERESIKO, BULAN) %>%
+  filter(KECAMATAN == params$kec_text, 
+         KELURAHAN == params$desa_text, BULAN == params$bulan)
+
+jumlah_sasaran_baduta <- sum(data_pie_baduta$BADUTA_SASARAN)
+
+data_pie_baduta <-data.frame(
+  Kategori = c("Terdampingi", "Tidak Terdampingi"),
+  Nilai = c(as.numeric(data_pie_baduta[1, 'BADUTA_TERDAMPINGI']), 
+            as.numeric(data_pie_baduta[1, 'BADUTA_TIDAK_TERDAMPINGI']))
+)
+
+data_pie_baduta <- data_pie_baduta %>%
+  mutate(Persentase = round(Nilai/jumlah_sasaran_baduta, 4)*100)
+
+persentase_terdampingi_baduta <- paste0(round(data_pie_baduta$Nilai[1] / sum(data_pie_baduta$Nilai) * 100, 1), "%")
+
+# Tentukan warna untuk setiap kategori
+warna_baduta <- "#f05e16"
+
+#
+persen_desa = mean(c(round(data_pie_baduta$Nilai[1] / sum(data_pie_baduta$Nilai) * 100, 1),
+                   round(data_pie_catin$Nilai[1] / sum(data_pie_catin$Nilai)  *100, 1),
+                   round(data_pie_pascasalin$Nilai[1] / sum(data_pie_pascasalin$Nilai) * 100, 1),
+                   round(data_pie_bumil$Nilai[1] / sum(data_pie_bumil$Nilai) * 100, 1)
+                   ))
+
+##
+persen_sulbar <- data_stunting %>%
+  select(CATIN_SASARAN,CATIN_TERDAMPINGI, BUMIL_SASARAN, BUMIL_TERDAMPINGI,
+         PASCASALIN_SASARAN, PASCASALIN_SASARAN, BADUTA_SASARAN, BADUTA_TERDAMPINGI, BULAN) %>%
+  filter(BULAN == params$bulan)
+
+sasaran_prov <- sum(persen_sulbar$CATIN_SASARAN, persen_sulbar$BUMIL_SASARAN, 
+               persen_sulbar$PASCASALIN_SASARAN, persen_sulbar$BADUTA_SASARAN)
+
+terdampingi_prov <- sum(persen_sulbar$CATIN_TERDAMPINGI, persen_sulbar$BUMIL_TERDAMPINGI, 
+                    persen_sulbar$PASCASALIN_TERDAMPINGI, persen_sulbar$BADUTA_TERDAMPINGI)
+
+persen_sulbar <- round(terdampingi_prov/sasaran_prov * 100, 2)
+
+if(persen_sulbar <= persen_desa){
+  kondisi_persen_pendampingan = paste0("Lebih jauh, angka tersebut mengungguli rata-rata tingkat provinsi yang sebesar ", persen_sulbar, "%. Hal ini menegaskan komitmen dan keberhasilan MAHAHE dalam meningkatkan kesejahteraan dan kesehatan masyarakatnya melalui pendampingan yang efektif.")
+} else {
+  kondisi_persen_pendampingan = paste0("Lebih lanjut, angka tersebut menunjukkan tantangan yang dihadapi oleh MAHAHE, dengan capaian pendampingan yang lebih rendah dari rata-rata tingkat provinsi yang mencapai ",  persen_sulbar, "%. Hal ini menegaskan perlunya upaya tambahan untuk meningkatkan efektivitas program pendampingan guna mencapai standar kesejahteraan dan kesehatan masyarakat yang diinginkan.")
+}
+```
+
+```{r grafik_pie, echo = FALSE , message=FALSE, warning=FALSE}
+#| layout-nrow: 1
+big_number_donut_plot(data_pie_catin, warna_catin, persentase_terdampingi_catin) +
+  ggtitle("% Pendampingan Catin")
+
+big_number_donut_plot(data_pie_bumil, warna_bumil, persentase_terdampingi_bumil) +
+  ggtitle("% Pendampingan Bumil")
+
+big_number_donut_plot(data_pie_pascasalin, warna_pascasalin, persentase_terdampingi_pascasalin) +
+  ggtitle("% Pendampingan Pascasalin")
+
+big_number_donut_plot(data_pie_bumil, warna_baduta, persentase_terdampingi_bumil) +
+  ggtitle("% Pendampingan Baduta")
+```
+
+Secara rata-rata, tingkat pendampingan untuk empat sasaran utama di `r params$desa_text` yaitu Calon Pengantin, Ibu Hamil, Ibu Pasca-salin, dan Bayi di bawah 2 tahun, mencapai `r persen_desa`%.  `r kondisi_persen_pendampingan`
+
+```{r sampai_bulan, echo = FALSE , message=FALSE, warning=FALSE}
+  pilih_sampai_bulan <- function(bulan_yang_dipilih) {
+    daftar_bulan <- c("JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER")
+    
+    # Temukan indeks bulan yang dipilih
+    indeks_bulan <- which(daftar_bulan == toupper(bulan_yang_dipilih))
+    
+    # Validasi jika bulan tidak ditemukan
+    if (length(indeks_bulan) == 0) {
+      cat("Bulan tidak ditemukan.")
+      return(NULL)
+    }
+    
+    # Buat subset daftar bulan dari Januari hingga bulan yang dipilih
+    daftar_bulan_subset <- daftar_bulan[1:indeks_bulan]
+    
+    return(daftar_bulan_subset)
+  }
+```
+
+```{r fungsi_grafik_line, echo=FALSE}
+buat_grafik_line <- function(data, judul="Masukkan Judul") {
+  data_line_coba <- data %>%
+    gather("KATEGORI", "NILAI", c(3:4,6))
+  
+  titik_akhir <- data_line_coba %>%
+    group_by(KATEGORI) %>%
+    summarise(BULAN = tail(BULAN, n = 1),
+              NILAI = tail(NILAI, n = 1)) %>%
+    mutate(LABELS = paste(NILAI, KATEGORI, sep = "-"))
+  
+  titik_awal <- data_line_coba %>%
+    group_by(KATEGORI) %>%
+    summarise(BULAN = head(BULAN, n = 1),
+              NILAI = head(NILAI, n = 1))
+  
+  plot <- ggplot(data_line_coba, aes(x = BULAN, y = NILAI, group = KATEGORI, color = KATEGORI)) +
+    geom_line() +
+    geom_point() +
+    ggtitle(judul) +
+    ylab("Jumlah") +
+    geom_label_repel(data = titik_akhir, aes(label = LABELS),
+                     label.size = 0,
+                     size = 3,
+                     nudge_x = 0.1,
+                     na.rm = TRUE) +
+    geom_label_repel(data = titik_awal, aes(label = NILAI),
+                     label.size = 0,
+                     size = 3,
+                     nudge_x = -0.1,
+                     na.rm = TRUE) +
+    theme_minimal() +
+    theme(
+      legend.position = "none"
+    )
+  
+  return(plot)
+}
+```
+
+```{r data_line_stunting, echo = FALSE , message=FALSE, warning=FALSE}
+daftar_bulan <- c("JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI", "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER")
+    
+data_line_catin <- data_stunting %>%
+  select(KECAMATAN, KELURAHAN, CATIN_SASARAN, CATIN_TERDAMPINGI, 
+         CATIN_TIDAK_TERDAMPINGI,CATIN_BERESIKO, BULAN) %>%
+  filter(KECAMATAN == params$kec_text, 
+         KELURAHAN == params$desa_text, BULAN %in% pilih_sampai_bulan(params$bulan))
+data_line_catin$BULAN <- factor(data_line_catin$BULAN, levels = daftar_bulan)  
+colnames(data_line_catin) <- c("KECAMATAN", "KELURAHAN", "Sasaran", "Terdampingi",  
+                               "Tidak Terdampingi", "Beresiko", "BULAN")
+
+data_line_bumil <- data_stunting %>%
+  select(KECAMATAN, KELURAHAN, BUMIL_SASARAN, BUMIL_TERDAMPINGI, 
+         BUMIL_TIDAK_TERDAMPINGI, BUMIL_BERESIKO, BULAN) %>%
+  filter(KECAMATAN == params$kec_text, 
+         KELURAHAN == params$desa_text, BULAN %in% pilih_sampai_bulan(params$bulan))
+data_line_bumil$BULAN <- factor(data_line_bumil$BULAN, levels = daftar_bulan)  
+colnames(data_line_bumil) <- c("KECAMATAN", "KELURAHAN", "Sasaran", "Terdampingi",  
+                               "Tidak Terdampingi", "Beresiko", "BULAN")
+
+data_line_pascasalin <- data_stunting %>%
+  select(KECAMATAN, KELURAHAN, PASCASALIN_SASARAN, PASCASALIN_TERDAMPINGI, 
+         PASCASALIN_TIDAK_TERDAMPINGI, PASCASALIN_BERESIKO, BULAN) %>%
+  filter(KECAMATAN == params$kec_text, 
+         KELURAHAN == params$desa_text, BULAN %in% pilih_sampai_bulan(params$bulan))
+data_line_pascasalin$BULAN <- factor(data_line_pascasalin$BULAN, levels = daftar_bulan)  
+colnames(data_line_pascasalin) <- c("KECAMATAN", "KELURAHAN", "Sasaran", "Terdampingi",  
+                               "Tidak Terdampingi", "Beresiko", "BULAN")
+
+data_line_baduta <- data_stunting %>%
+  select(KECAMATAN, KELURAHAN, BADUTA_SASARAN, BADUTA_TERDAMPINGI, 
+         BADUTA_TIDAK_TERDAMPINGI, BADUTA_BERESIKO, BULAN) %>%
+  filter(KECAMATAN == params$kec_text, 
+         KELURAHAN == params$desa_text, BULAN %in% pilih_sampai_bulan(params$bulan))
+data_line_baduta$BULAN <- factor(data_line_baduta$BULAN, levels = daftar_bulan)  
+colnames(data_line_baduta) <- c("KECAMATAN", "KELURAHAN", "Sasaran", "Terdampingi",  
+                               "Tidak Terdampingi", "Beresiko", "BULAN")
+```
+
+Selanjutnya untuk melihat, tren progres pendampingan 4 sasaran sebagaimana di maksud, dapat dilihat pada tabel berikut:
+
+
+```{r line, echo = FALSE , message=FALSE, warning=FALSE}
+#| layout-nrow: 2
+buat_grafik_line(data_line_catin, "Progress Pendampingan Catin")
+buat_grafik_line(data_line_bumil, "Progress Pendampingan Bumil")
+buat_grafik_line(data_line_pascasalin, "Progress Pendampingan Pascasalin")
+buat_grafik_line(data_line_baduta, "Progress Pendampingan Baduta")
+```
+
+## Keluarga Berencana
